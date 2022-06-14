@@ -1,0 +1,837 @@
+#############################################
+#I PART 
+#############################################
+
+# imports datetime for picking beginning and end dates for the analysis
+import datetime
+# Install yfinance package.
+!pip install yfinance
+# imports yahoo finance for getting historical stock prices
+import yfinance as yf
+# imports pandas for dataframe manipulation
+import pandas as pd
+# imports numpy
+import numpy as np
+# for data visualization
+import matplotlib as mpl
+# for changing the plot size in the Jupyter Notebook output
+%matplotlib inline
+# sets the plot size to 12x8
+mpl.rcParams['figure.figsize'] = (12,8)
+# for shorter lines with plotting
+from matplotlib import pyplot as plt
+# to hide warning messages
+import warnings
+warnings.filterwarnings('ignore')
+#------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------#
+# sets the sample period as 20 years back from 13/05/2020
+   
+end = datetime.date.today()
+##datetime.datetime(2021, 2, 28)
+start = end - datetime.timedelta(days=10*365)
+##end - datetime.timedelta(days =10*365)
+##datetime.datetime.now()
+ 
+#------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------#
+# gets the closing price fo Sotck  for the past 10 years
+my_stock = yf.Ticker('SANB3.SA')
+my_stock = pd.DataFrame(my_stock.history(start = start, end = end)['Close'])
+my_stock = my_stock.rename(str.lower, axis = 'columns')
+ 
+# grabs the last 100 observations, which will be reduced to 50 for the purpose of fitting a
+# distribution for Monte Carlo simulation
+my_stock_resid_distr_fitting = my_stock[-500:]
+# creates a training subset missing the final 100 observations, which are being withheld
+my_stock_train = my_stock[~my_stock.isin(my_stock_resid_distr_fitting).all(1)]
+# grabs the final 50 observations for a test set
+my_stock_test = my_stock_resid_distr_fitting[-250:]
+# reduces the distribution fitting dataset to 50 observations
+my_stock_resid_distr_fitting = my_stock_resid_distr_fitting[~my_stock_resid_distr_fitting.isin(my_stock_test).all(1)]
+ 
+# plots the my_stock weekly closing price over the past 20 years
+plt.plot(my_stock.index, my_stock.close)
+plt.title('Daily Closing Price: Past 10 Years')
+plt.xlabel('Date')
+plt.ylabel('Closing Share Price')
+plt.show 
+ 
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# sets the plot size to 12x8
+mpl.rcParams['figure.figsize'] = (12,8)
+ 
+# plots the ACF for the entire train period
+pd.plotting.autocorrelation_plot(my_stock_train.close)
+plt.show()
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# sets the plot size to 12x8
+mpl.rcParams['figure.figsize'] = (12,8)
+ 
+# plots the ACF for the differenced data over the entire train period
+pd.plotting.autocorrelation_plot(my_stock_train.close.diff().dropna())
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# imports the Augmented Dickey-Fuller Test for establishing the order of integration of 
+# time series
+from statsmodels.tsa.stattools import adfuller
+ 
+# performs ADF tests with no constant, a constant, and a constant plus linear trend on
+# PETR4.SAclosing share prices
+for i in ['nc', 'c', 'ct']:
+    result = adfuller(my_stock_train.close, regression = i)
+    print('ADF Statistic with %s for Closing my_stock price: %f' % (i, result[0]))
+    print('p-value: %f' % result[1])
+    print('')
+ 
+# performs ADF tests with no constant, a constant, and a constant plus linear trend on
+# differenced VALE3.SA closing share prices
+for i in ['nc', 'c', 'ct']:
+    result = adfuller(my_stock_train.close.diff().dropna(), regression = i)
+    print('ADF Statistic with %s for Differenced Closing my_stock price: %f' % (i, result[0]))
+    print('p-value: %f' % result[1])
+    print('')
+ 
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# imports the ARIMA model
+from statsmodels.tsa.arima_model import ARIMA
+ 
+# fits the ARIMA model
+my_stock_arima = ARIMA(np.log(my_stock_train.astype(float)), order = (1, 1, 1))
+my_stock_arima_fit = my_stock_arima.fit(disp = 0)
+print(my_stock_arima_fit.summary())
+ 
+# sets the plot size to 12x8
+mpl.rcParams['figure.figsize'] = (12,8)
+ 
+# plot residual errors of the training data
+residuals = pd.DataFrame(my_stock_arima_fit.resid)
+residuals.plot()
+plt.show()
+residuals.plot(kind='kde')
+plt.show()
+print(residuals.describe())
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# imports the mean squared error function
+from sklearn.metrics import mean_squared_error
+ 
+ 
+ 
+# creates a new dataframe that will be added to as the forecast rolls 
+history = np.log(my_stock_train.astype(float))
+# creates an empty list that will hold predictions
+predictions = []
+# loops through the indexes of the set being forecased
+for i in range(len(my_stock_resid_distr_fitting)):
+    # estimates an ARIMA model of order (1,1,1)
+    model = ARIMA(history, order = (1,1,1))
+    # fits the model
+    model_fit = model.fit(disp = 0)
+    # forecasts the next period
+    output = model_fit.forecast()
+    # takes the predicted value and saves it in yhat
+    yhat = np.e ** output[0]
+    # appends yhat to the list of predictions
+    predictions.append(yhat)
+    # grabs the observation at the ith index
+    obs = my_stock_resid_distr_fitting[i : i + 1]
+    # appends the observation to the estimation data set
+    history = history.append(np.log(obs.astype(float)))
+ 
+# prints the MSE of the model for the rolling forecast period
+error = mean_squared_error(my_stock_resid_distr_fitting, predictions)
+print('Test MSE: %.3f' % error)
+ 
+# converts the predictions list to a pandas dataframe with the same index as the actual values
+# for plotting purposes
+predictions = pd.DataFrame(predictions)
+predictions.index = my_stock_resid_distr_fitting.index
+ 
+# sets the plot size to 12x8
+mpl.rcParams['figure.figsize'] = (12,8)
+ 
+# plots the predicted and actual stock prices 
+plt.plot(my_stock_resid_distr_fitting)
+plt.plot(predictions, color = 'blue')
+plt.xlabel('Date')
+plt.ylabel('Dollars')
+plt.title('Predicted vs. Actual Closing Weekly Stock Price')
+plt.show()
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# sets the plot size to 12x8
+mpl.rcParams['figure.figsize'] = (12,8)
+ 
+# plots the residuals
+tune_residuals = my_stock_resid_distr_fitting.close - predictions[0]
+tune_residuals.plot(kind = 'kde')
+# to suppress warnings
+warnings.filterwarnings('ignore')
+ 
+# produces a summary of the residuals
+tune_residuals.astype(float).describe()
+
+
+
+#############################################
+#II PART 
+#############################################
+
+# Install fitter package.
+!pip install Fitter
+# to suppress warnings
+warnings.filterwarnings('ignore')
+
+# imports the fitter function and produces estimated fits for our residuals
+from fitter import Fitter
+
+f = Fitter(tune_residuals)
+f.fit()
+
+# creates a function to do MC simulation with a Laplacian distribution
+def laplace_monte_carlo(mean, residuals, n_sims):
+    # gets the estimated beta or mean absolute distance from the mean
+    beta = (sum(abs(residuals - np.mean(residuals))) 
+                           / len(residuals))
+    # uses the numpy function to generate an array of simulated values
+    est_range = np.random.laplace(mean, beta, n_sims)
+    # converts the array to a list
+    est_range = list(est_range)
+    # returns the simulated values
+    return(est_range)
+
+def roll_forecast_nmc(train, test, std_dev, n_sims):
+    # creates a new dataframe that will be added to as the forecast rolls 
+    history = np.log(train.astype(float))
+    # creates an empty list that will hold predictions
+    predictions = []
+    # loops through the indexes of the set being forecased
+    for i in range(len(test)):
+        # estimates an ARIMA model of order (1,1,0)
+        model = ARIMA(history, order = (1,1,1))
+        # fits the model
+        model_fit = model.fit(disp = 0)
+        # forecasts the next period
+        output = model_fit.forecast()
+        # takes the predicted value and saves it in yhat
+        yhat = np.e ** output[0]
+        # performs monte carlo simulation using the predicted price as the mean, user-specified
+        # standard deviation, and number of simulations
+        yhat_range = laplace_monte_carlo(yhat, std_dev, n_sims)
+        # appends yhat_range to the list of predictions
+        predictions.append([float(i) for i in yhat_range])
+        # grabs the observation at the ith index
+        obs = test[i : i + 1]
+        # appends the observation to the estimation data set
+        history = history.append(np.log(obs.astype(float)))
+
+    # converts the predictions list to a pandas dataframe with the same index as the actual 
+    # values for plotting purposes
+    predictions = pd.DataFrame(predictions)
+    predictions.index = my_stock_resid_distr_fitting.index
+    # converts all the estimated yhats in each column to one list per row
+    predictions['predicted_range'] = predictions.values.tolist()
+    # grabs only the column with all values in a list
+    predictions = pd.DataFrame(predictions['predicted_range'])
+        
+    # returns predictions
+    return(predictions)
+
+# attaches the data withheld for investigating the forecast residuals back to the training
+# data set to avoid a large error on the first forecast
+my_stock_train = my_stock_train.append(my_stock_resid_distr_fitting)
+
+
+# produces a rolling forecast with prediction intervals using 1000 MC sims
+test_preds = roll_forecast_nmc(my_stock_train, 
+                               my_stock_test, 
+                               tune_residuals,
+                              10000)
+
+
+#############################################
+#III PART 
+#############################################
+#########-------###################-------########################-----------------
+ 
+####### MODELO DE MONTE CARLO POR VOLATILDIADE (DETERINAÇÃO DO TP E SL)
+ 
+#########-------###################-------########################-----------------
+# Install yfinance package.
+!pip install yfinance 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tqdm import tqdm
+import datetime
+sns.set()
+ 
+import pandas_datareader as web
+#Import data
+#end = datetime.date.today()
+##datetime.datetime(2021, 2, 28)
+#start = end - datetime.timedelta(days=10*365)
+
+
+end=datetime.date.today()
+start=end - datetime.timedelta(days=10*365) 
+# sets the sample period as 20 years back from 13/05/2020
+
+#------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------#
+# gets the closing price fo Sotck  for the past 10 years
+my_stock_2 = yf.Ticker('SANB3.SA')
+df = pd.DataFrame(my_stock_2.history(start = start, end = end)['Close'])
+##my_stock = my_stock.rename(str.lower, axis = 'columns')
+
+##df=web.DataReader( 'ABEV3.SA', data_source='yahoo' )
+print(df.shape)
+df.head()
+def pct_change(x,period=1):
+    x = np.array(x)
+    return ((x[period:] - x[:-period]) / x[:-period])
+ 
+number_simulation = 5000
+predict_day = 5
+ 
+results = pd.DataFrame()
+ 
+for i in tqdm(range(number_simulation)):
+    prices = df.Close.values[-predict_day:].tolist()
+    volatility = pct_change(prices[-predict_day:]).std()
+    for d in range(predict_day):
+        prices.append(prices[-1] * (1 + np.random.normal(0, volatility)))
+        volatility = pct_change(prices[-predict_day:]).std()
+    results[i] = pd.Series(prices[-predict_day:]).values
+ 
+plt.figure(figsize=(10,5))
+plt.plot(results)
+plt.ylabel('Value')
+plt.xlabel('Simulated days')
+plt.show()
+ 
+raveled = results.values.ravel()
+raveled.sort()
+cp_raveled = raveled.copy()
+ 
+plt.figure(figsize=(17,5))
+plt.subplot(1,3,1)
+plt.plot(results)
+plt.ylabel('Value')
+plt.xlabel('Simulated days')
+plt.subplot(1,2,1)
+sns.distplot(df.Close,norm_hist=True)
+plt.title('$\mu$ = %.2f, $\sigma$ = %.2f'%(df.Close.mean(),df.Close.std()))
+plt.subplot(1,2,2)
+sns.distplot(raveled,norm_hist=True,label='monte carlo samples')
+sns.distplot(df.Close,norm_hist=True,label='real samples')
+plt.title('simulation $\mu$ = %.2f, $\sigma$ = %.2f'%(raveled.mean(),raveled.std()))
+plt.legend()
+plt.show()
+ 
+ 
+# creates an empty list
+in_prediction_interval = []
+# loops through the rows in the testing data set
+for i in range(len(my_stock_test)):
+    # appends true if the actual price is in the interval of predicted prices and false
+    # otherwise
+    in_prediction_interval.append(np.where(min(test_preds.predicted_range[i]) <= 
+                                           my_stock_test.close[i]
+                                          <= max(test_preds.predicted_range[i]), 
+                                           True, False))
+# prints the percentage of actual prices in the prediction intervals    
+print('Percentage of Actual Stock Prices in Predicted Stock Price Range: %f' % 
+      (100 * sum(in_prediction_interval) / len(in_prediction_interval)))
+# creates empty lists to append to with minimum and maximum values for each weeks prediction
+min_range = []
+max_range = []
+ 
+# loops through the rows in test_preds
+for i in range(len(test_preds)):
+    # appends to the list the min or max value as appropriate
+    min_range.append(min(test_preds.predicted_range[i]))
+    max_range.append(max(test_preds.predicted_range[i]))
+ 
+# converts the lists to data frames and makes their indexes match up with the dates they're
+# predicting
+min_range = pd.DataFrame(min_range)
+min_range.index = my_stock_test.index
+max_range = pd.DataFrame(max_range)
+max_range.index = my_stock_test.index
+ 
+# plots the actual stock price with prediction intervals
+plt.plot(my_stock_test)
+plt.plot(min_range, color = 'blue')
+plt.plot(max_range, color = 'blue')
+plt.xlabel('Date')
+plt.ylabel('Reais (R$)')
+plt.title('Actual Closing Weekly Stock Price with Prediction Intervals')
+plt.show()
+# sets a target price to see the probability that the actual stock price is greater than or 
+# equal to this target
+target_price = raveled.mean()
+  #Close Price session #stock EZTC3
+# creates a list of True values where the simulated price is above or equal to the target price
+# and False where it is below
+above_target = [i >= target_price for i in test_preds.predicted_range[len(test_preds) - 1]]
+# prints the probability
+ 
+print('Probabildiade do preço da ação fechar no próximo pregão  a cima de preço de pregão de referência : %f' %
+      ((sum(above_target) / len(above_target))*100 )) 
+
+a= ((sum(above_target) / len(above_target))*100)
+if 31 <a < 75:
+  print ("EZTC3......>>>>>POSIÇÃO NEUTRA <<<<.....>>>>>TENDÊNCIA NEUTRA<<<<<.....")
+
+if a> 75:
+  print ("EZTC3........>>>> COMPRAR AÇÃO <<<<......>>>>>TENDÊNDCIA DE ALTA<<<<<....")  
+if a< 30:
+  print ("EZTC3.......>>>>VENDER AÇÃO<<<<....... >>>>>TENDÊNCIA DE BAIXA<<<<.....")  
+
+print('>>>> Preço de pregão de referência <<<< : %f'%( raveled.mean()), (end))
+ 
+print ('TAKE PROFIT MC:%f'%((raveled.mean())+raveled.std()))
+ 
+print('STOP LOSS MC :%f' %((raveled.mean())-raveled.std()))
+
+
+#############################################
+#IV PART 
+#############################################
+# Install yfinance package.
+!pip install yfinance
+!pip install yahoo_fin
+!pip install pandas
+##index_name = '^BVSP' # BOVESPA INDEX 
+from pandas_datareader import data as pdr
+from yahoo_fin import stock_info as si
+from pandas import ExcelWriter
+import yfinance as yf
+import pandas as pd
+import requests
+import datetime
+import time
+ 
+## mONTECARL SIMULATION
+import math
+import matplotlib.pyplot as plt
+import numpy as np
+from pandas_datareader import data
+ 
+ 
+yf.pdr_override()
+ 
+stocklist = ['SANB3.SA'
+             ]
+index_name = '^BVSP' # Bovespa
+ 
+final = []
+index = []
+n = -1
+ 
+exportList = pd.DataFrame(columns=['Stock', 'RETORNO','Preço', 'ALVO', 'PROJ EM DIAS'])
+#LOOP SETENÇA --> 3 DIAS DE PROJEÇÃO 
+for stock in stocklist:
+    n += 1
+    time.sleep(1)
+    print ("\npulling {} with index {}".format(stock, n))
+    
+
+    start_date = datetime.datetime.now() - datetime.timedelta(days=21)
+    end_date = datetime.date.today()
+    df = pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+    currentClose = df["Adj Close"]
+
+    fii = pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+ 
+    time_elapsed = (fii.index[-1] - fii.index[0]).days
+ 
+    price_ratio = (fii['Adj Close'][-1] / fii['Adj Close'][1])
+    inverse_number_of_years = 15/ time_elapsed    #PARA 1O DIAS 
+    cagr = price_ratio ** inverse_number_of_years - 1
+    vol = fii['Adj Close'].pct_change().std()
+ # NUMERO DE PROJEÇÃO DE DIAS 
+    number_of_trading_days = 10  #PARA 1O DIAS 
+    vol = vol * math.sqrt(number_of_trading_days)
+
+
+
+#50000
+    number_of_trials = 5500000
+    for i in range(number_of_trials):
+        daily_return_percentages = np.random.normal(cagr/number_of_trading_days, vol/math.sqrt(number_of_trading_days),number_of_trading_days)+1
+        price_series = [fii['Adj Close'][-1]]
+
+    for drp in daily_return_percentages:
+        price_series.append(price_series[-1] * drp)
+    
+    
+#1000000
+
+    ending_price_points = []
+    larger_number_of_trials = 11000000# It's over 9000
+    for i in range(larger_number_of_trials):
+        daily_return_percentages = np.random.normal(cagr/number_of_trading_days, vol/math.sqrt(number_of_trading_days),number_of_trading_days)+1
+        price_series = [fii['Adj Close'][-1]]
+
+    for drp in daily_return_percentages:
+        price_series.append(price_series[-1] * drp)
+    
+   
+    
+    ending_price_points.append(price_series[-1])
+
+    expected_ending_price_point = round(np.mean(ending_price_points),2)
+    
+    
+
+
+    population_mean = (cagr+1) * fii['Adj Close'][-1]
+#print ("Sample Mean : ", str(expected_ending_price_point))
+#print ("Population Mean: ", str(round(population_mean,2)));
+#print ("Percent Difference (Population Mean-Sample Mean ): ", str(round((population_mean - expected_ending_price_point)/population_mean *100 ,2)), "%")
+
+    top_ten = np.percentile(ending_price_points,100-45)
+    bottom_ten = np.percentile(ending_price_points,45);
+    
+
+ # Determinação do preço de mercado  
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from tqdm import tqdm
+    import datetime
+    sns.set()
+   
+    import pandas_datareader as web
+#Import data
+#end = datetime.date.today()
+##datetime.datetime(2021, 2, 28)
+#start = end - datetime.timedelta(days=10*365)
+    end=datetime.date.today()
+    start=end - datetime.timedelta(days=10*365) 
+    df=pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+    print(df.shape)
+    df.head()
+    def pct_change(x,period=1):
+        x = np.array(x)
+        return ((x[period:] - x[:-period]) / x[:-period])
+ 
+    number_simulation = 500
+    predict_day = 5
+ 
+    results = pd.DataFrame()
+ 
+    for i in tqdm(range(number_simulation)):
+        prices = df.Close.values[-predict_day:].tolist()
+        volatility = pct_change(prices[-predict_day:]).std()
+        for d in range(predict_day):
+            prices.append(prices[-1] * (1 + np.random.normal(0, volatility)))
+            volatility = pct_change(prices[-predict_day:]).std()
+        results[i] = pd.Series(prices[-predict_day:]).values
+ 
+    
+ 
+    raveled = results.values.ravel()
+    raveled.sort()
+    cp_raveled = raveled.copy()
+ 
+
+
+
+    
+
+    
+
+#plt.hist(ending_price_points,bins=100)
+#plt.axvline(top_ten,color='r',linestyle='dashed',linewidth=2)
+#plt.axvline(bottom_ten,color='r',linestyle='dashed',linewidth=2)
+#plt.axhline(fii['Adj Close'][-1],color='g', linestyle='dashed',linewidth=2)
+#plt.show()
+
+    print ( end_date, '......DATA DE REFERÊCIA DA ANÁLIS DE MC.....')
+
+    exportList = exportList.append({'Stock':stock, 'RETORNO':cagr,'Preço': raveled.mean(), 'ALVO':expected_ending_price_point, 'PROJ EM DIAS':number_of_trading_days}, ignore_index=True)    
+    plt.show()
+    print (exportList) 
+    plt.plot(price_series)
+    plt.show()
+
+#LOOP SETENÇA --> 5 DIAS DE PROJEÇÃO 
+for stock in stocklist:
+    n += 1
+    time.sleep(1)
+    print ("\npulling {} with index {}".format(stock, n))
+    
+
+    start_date = datetime.datetime.now() - datetime.timedelta(days=21)
+    end_date = datetime.date.today()
+    df = pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+    currentClose = df["Adj Close"]
+
+    fii = pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+ 
+    time_elapsed = (fii.index[-1] - fii.index[0]).days
+ 
+    price_ratio = (fii['Adj Close'][-1] / fii['Adj Close'][1])
+    inverse_number_of_years = 15 / time_elapsed    #PARA 1O DIAS 
+    cagr = price_ratio ** inverse_number_of_years - 1
+    vol = fii['Adj Close'].pct_change().std()
+ # NUMERO DE PROJEÇÃO DE DIAS 
+    number_of_trading_days = 10 #PARA 1O DIAS 
+    vol = vol * math.sqrt(number_of_trading_days)
+
+
+
+#50000
+    number_of_trials = 5500000
+    for i in range(number_of_trials):
+        daily_return_percentages = np.random.normal(cagr/number_of_trading_days, vol/math.sqrt(number_of_trading_days),number_of_trading_days)+1
+        price_series = [fii['Adj Close'][-1]]
+
+    for drp in daily_return_percentages:
+        price_series.append(price_series[-1] * drp)
+    
+    
+#1000000
+
+    ending_price_points = []
+    larger_number_of_trials = 11000000# It's over 9000
+    for i in range(larger_number_of_trials):
+        daily_return_percentages = np.random.normal(cagr/number_of_trading_days, vol/math.sqrt(number_of_trading_days),number_of_trading_days)+1
+        price_series = [fii['Adj Close'][-1]]
+
+    for drp in daily_return_percentages:
+        price_series.append(price_series[-1] * drp)
+    
+   
+    
+    ending_price_points.append(price_series[-1])
+
+    expected_ending_price_point = round(np.mean(ending_price_points),2)
+    
+  
+
+
+    population_mean = (cagr+1) * fii['Adj Close'][-1]
+#print ("Sample Mean : ", str(expected_ending_price_point))
+#print ("Population Mean: ", str(round(population_mean,2)));
+#print ("Percent Difference (Population Mean-Sample Mean ): ", str(round((population_mean - expected_ending_price_point)/population_mean *100 ,2)), "%")
+
+    top_ten = np.percentile(ending_price_points,100-45)
+    bottom_ten = np.percentile(ending_price_points,45);
+  
+
+ # Determinação do preço de mercado  
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from tqdm import tqdm
+    import datetime
+    sns.set()
+   
+    import pandas_datareader as web
+#Import data
+#end = datetime.date.today()
+##datetime.datetime(2021, 2, 28)
+#start = end - datetime.timedelta(days=10*365)
+    end=datetime.date.today()
+    start=end - datetime.timedelta(days=10*365) 
+    df=pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+    print(df.shape)
+    df.head()
+    def pct_change(x,period=1):
+        x = np.array(x)
+        return ((x[period:] - x[:-period]) / x[:-period])
+ 
+    number_simulation = 500
+    predict_day = 5
+ 
+    results = pd.DataFrame()
+ 
+    for i in tqdm(range(number_simulation)):
+        prices = df.Close.values[-predict_day:].tolist()
+        volatility = pct_change(prices[-predict_day:]).std()
+        for d in range(predict_day):
+            prices.append(prices[-1] * (1 + np.random.normal(0, volatility)))
+            volatility = pct_change(prices[-predict_day:]).std()
+        results[i] = pd.Series(prices[-predict_day:]).values
+ 
+    
+ 
+    raveled = results.values.ravel()
+    raveled.sort()
+    cp_raveled = raveled.copy()
+ 
+
+
+
+    print('>>>> Preço de pregão de referência <<<< : %f'%( raveled.mean()), (end))
+ 
+
+
+    
+
+#plt.hist(ending_price_points,bins=100)
+#plt.axvline(top_ten,color='r',linestyle='dashed',linewidth=2)
+#plt.axvline(bottom_ten,color='r',linestyle='dashed',linewidth=2)
+#plt.axhline(fii['Adj Close'][-1],color='g', linestyle='dashed',linewidth=2)
+#plt.show()
+
+    print ( end_date, '......DATA DE REFERÊCIA DA ANÁLIS DE MC.....')
+
+    exportList = exportList.append({'Stock':stock, 'RETORNO':cagr,'Preço': raveled.mean(), 'ALVO':expected_ending_price_point, 'PROJ EM DIAS':number_of_trading_days}, ignore_index=True)    
+    plt.show()
+    print (exportList) 
+    plt.plot(price_series)
+    plt.show()
+ 
+ #LOOP SETENÇA --> 10 DIAS DE PROJEÇÃO 
+for stock in stocklist:
+    n += 1
+    time.sleep(1)
+    print ("\npulling {} with index {}".format(stock, n))
+    
+
+    start_date = datetime.datetime.now() - datetime.timedelta(days=21)
+    end_date = datetime.date.today()
+    df = pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+    currentClose = df["Adj Close"]
+
+    fii = pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+ 
+    time_elapsed = (fii.index[-1] - fii.index[0]).days
+ 
+    price_ratio = (fii['Adj Close'][-1] / fii['Adj Close'][1])
+    inverse_number_of_years = 15 / time_elapsed    #PARA 1O DIAS 
+    cagr = price_ratio ** inverse_number_of_years - 1
+    vol = fii['Adj Close'].pct_change().std()
+ # NUMERO DE PROJEÇÃO DE DIAS 
+    number_of_trading_days = 10 #PARA 1O DIAS 
+    vol = vol * math.sqrt(number_of_trading_days)
+
+
+
+#50000
+    number_of_trials = 5500000
+    for i in range(number_of_trials):
+        daily_return_percentages = np.random.normal(cagr/number_of_trading_days, vol/math.sqrt(number_of_trading_days),number_of_trading_days)+1
+        price_series = [fii['Adj Close'][-1]]
+
+    for drp in daily_return_percentages:
+        price_series.append(price_series[-1] * drp)
+    
+    
+#1000000
+
+    ending_price_points = []
+    larger_number_of_trials = 11000000# It's over 9000
+    for i in range(larger_number_of_trials):
+        daily_return_percentages = np.random.normal(cagr/number_of_trading_days, vol/math.sqrt(number_of_trading_days),number_of_trading_days)+1
+        price_series = [fii['Adj Close'][-1]]
+
+    for drp in daily_return_percentages:
+        price_series.append(price_series[-1] * drp)
+    
+   
+    
+    ending_price_points.append(price_series[-1])
+
+    expected_ending_price_point = round(np.mean(ending_price_points),2)
+    
+  
+
+
+    population_mean = (cagr+1) * fii['Adj Close'][-1]
+#print ("Sample Mean : ", str(expected_ending_price_point))
+#print ("Population Mean: ", str(round(population_mean,2)));
+#print ("Percent Difference (Population Mean-Sample Mean ): ", str(round((population_mean - expected_ending_price_point)/population_mean *100 ,2)), "%")
+
+    top_ten = np.percentile(ending_price_points,100-45)
+    bottom_ten = np.percentile(ending_price_points,45);
+  
+
+ # Determinação do preço de mercado  
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from tqdm import tqdm
+    import datetime
+    sns.set()
+   
+    import pandas_datareader as web
+#Import data
+#end = datetime.date.today()
+##datetime.datetime(2021, 2, 28)
+#start = end - datetime.timedelta(days=10*365)
+    end=datetime.date.today()
+    start=end - datetime.timedelta(days=10*365) 
+    df=pdr.get_data_yahoo(stock, start=start_date, end=end_date)
+    print(df.shape)
+    df.head()
+    def pct_change(x,period=1):
+        x = np.array(x)
+        return ((x[period:] - x[:-period]) / x[:-period])
+ 
+    number_simulation = 500
+    predict_day = 5
+ 
+    results = pd.DataFrame()
+ 
+    for i in tqdm(range(number_simulation)):
+        prices = df.Close.values[-predict_day:].tolist()
+        volatility = pct_change(prices[-predict_day:]).std()
+        for d in range(predict_day):
+            prices.append(prices[-1] * (1 + np.random.normal(0, volatility)))
+            volatility = pct_change(prices[-predict_day:]).std()
+        results[i] = pd.Series(prices[-predict_day:]).values
+ 
+    
+ 
+    raveled = results.values.ravel()
+    raveled.sort()
+    cp_raveled = raveled.copy()
+ 
+
+
+
+    print('>>>> Preço de pregão de referência <<<< : %f'%( raveled.mean()), (end))
+ 
+
+
+    
+
+#plt.hist(ending_price_points,bins=100)
+#plt.axvline(top_ten,color='r',linestyle='dashed',linewidth=2)
+#plt.axvline(bottom_ten,color='r',linestyle='dashed',linewidth=2)
+#plt.axhline(fii['Adj Close'][-1],color='g', linestyle='dashed',linewidth=2)
+#plt.show()
+
+    print ( end_date, '......DATA DE REFERÊCIA DA ANÁLIS DE MC.....')
+
+    exportList = exportList.append({'Stock':stock, 'RETORNO':cagr,'Preço': raveled.mean(), 'ALVO':expected_ending_price_point, 'PROJ EM DIAS':number_of_trading_days}, ignore_index=True)    
+    plt.show()
+    print (exportList) 
+    plt.plot(price_series)
+    plt.show()
